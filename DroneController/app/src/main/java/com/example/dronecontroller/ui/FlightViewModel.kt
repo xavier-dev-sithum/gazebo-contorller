@@ -86,19 +86,20 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
     private fun startStickStream() {
         stickJob?.cancel()
         stickJob = viewModelScope.launch(Dispatchers.Default) {
+            var out = Sticks()
             while (isActive) {
-                repo.sendSticks(sticks.value)
+                out = slew(out, sticks.value, STICK_SLEW_PER_TICK)
+                repo.sendSticks(out)
                 stepGimbal(STICK_PERIOD_MS / 1000f)
                 delay(STICK_PERIOD_MS)
             }
         }
     }
 
-    // Expo: fine control near center, full authority at the edge. Throttle stays linear so
-    // "center = hold altitude" in Position mode is exact.
-    fun setLeftStick(x: Float, y: Float) =
-        sticks.update { it.copy(yaw = shape(x), throttle = (deadzone(y) + 1f) / 2f) }
-    fun setRightStick(x: Float, y: Float) = sticks.update { it.copy(roll = shape(x), pitch = shape(y)) }
+    // Linear on purpose: PX4 already applies a deadzone (MAN_DEADZONE) and expo (0.6) to the sticks
+    // in Position mode. Shaping here as well made the sticks feel dead, then suddenly fast.
+    fun setLeftStick(x: Float, y: Float) = sticks.update { it.copy(yaw = x, throttle = (y + 1f) / 2f) }
+    fun setRightStick(x: Float, y: Float) = sticks.update { it.copy(roll = x, pitch = y) }
 
     fun setGimbalPad(x: Float, y: Float) { gimbalPad = x to y }
 
@@ -160,19 +161,15 @@ class FlightViewModel(app: Application) : AndroidViewModel(app) {
     private companion object {
         const val GIMBAL_RATE_DPS = 60f
         const val STICK_PERIOD_MS = 40L // 25 Hz
-        const val DEADZONE = 0.05f
-        const val EXPO = 0.5f
+        /** Max change per tick: 0.27 -> full stick in ~150 ms, so touch/release never steps. */
+        const val STICK_SLEW_PER_TICK = 0.27f
 
-        fun deadzone(v: Float): Float {
-            val a = kotlin.math.abs(v)
-            if (a < DEADZONE) return 0f
-            return kotlin.math.sign(v) * ((a - DEADZONE) / (1f - DEADZONE)).coerceAtMost(1f)
-        }
-
-        fun shape(v: Float): Float {
-            val d = deadzone(v)
-            return (1f - EXPO) * d + EXPO * d * d * d
-        }
+        fun slew(from: Sticks, to: Sticks, max: Float) = Sticks(
+            pitch = from.pitch + (to.pitch - from.pitch).coerceIn(-max, max),
+            roll = from.roll + (to.roll - from.roll).coerceIn(-max, max),
+            throttle = from.throttle + (to.throttle - from.throttle).coerceIn(-max / 2, max / 2),
+            yaw = from.yaw + (to.yaw - from.yaw).coerceIn(-max, max),
+        )
     }
 
     override fun onCleared() {

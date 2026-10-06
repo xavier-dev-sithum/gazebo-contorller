@@ -1,8 +1,10 @@
 package com.example.dronecontroller.ui.components
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,12 +19,17 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
  * Virtual joystick that springs back to center. Reports x (right +) and y (up +), both in -1..1.
- * Also used as the gimbal pad (grey knob + chevrons).
+ *
+ * Relative: the knob starts at center wherever the finger lands and follows the drag from there,
+ * so touching never makes the output jump. Tracking starts on the first movement (no touch slop),
+ * and the area is excluded from Android's edge gestures so a drag near the screen edge isn't
+ * cancelled by the system. Also used as the gimbal pad (grey knob + chevrons).
  */
 @Composable
 fun Joystick(
@@ -39,19 +46,30 @@ fun Joystick(
     Canvas(
         modifier
             .size(size)
+            .systemGestureExclusion()
             .pointerInput(enabled) {
                 if (!enabled) return@pointerInput
                 val radius = this.size.width / 2f
                 fun report() = onMove(knob.x / radius, -knob.y / radius)
-                detectDragGestures(
-                    onDragStart = { start ->
-                        knob = (start - Offset(radius, radius)).clamp(radius); report()
-                    },
-                    onDragEnd = { knob = Offset.Zero; report() },
-                    onDragCancel = { knob = Offset.Zero; report() },
-                ) { change, drag ->
-                    change.consume()
-                    knob = (knob + drag).clamp(radius); report()
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    down.consume()
+                    var drag = Offset.Zero
+                    try {
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            drag += change.positionChange()
+                            change.consume()
+                            knob = drag.clamp(radius)
+                            report()
+                        }
+                    } finally {
+                        // Lift or cancel: spring back to center.
+                        knob = Offset.Zero
+                        report()
+                    }
                 }
             }
     ) {
