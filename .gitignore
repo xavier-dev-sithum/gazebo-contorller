@@ -1,0 +1,16 @@
+# Android / Gradle
+DroneController/.gradle/
+DroneController/build/
+DroneController/app/build/
+DroneController/local.properties
+DroneController/.idea/
+DroneController/.kotlin/
+*.iml
+*.apk
+
+# Local tool config
+.qodo/
+
+# OS / editor
+.DS_Store
+*.swp

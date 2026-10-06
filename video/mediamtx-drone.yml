@@ -1,0 +1,39 @@
+# Dedicated MediaMTX instance for the simulated drone camera.
+# PX4's GstCameraSystem gz plugin sends RTP/H.264 to udp://127.0.0.1:5600.
+# The plugin encodes H.264 High 4:4:4, which Android decoders can't play, so ffmpeg
+# re-encodes to baseline yuv420p (960 wide) and publishes it here as rtsp://<PC>:8564/drone.
+# -threads 1 => one slice per frame. With zerolatency's sliced threads, flat scenes produce
+# tiny slices that get packed into STAP-A packets, and ExoPlayer then never renders a frame.
+# -g 15: keyframe every 0.5 s, so a frame lost on Wi-Fi freezes the picture for at most ~0.5 s.
+# -maxrate/-bufsize cap bitrate bursts (detailed worlds like Baylands) so Wi-Fi clients keep up.
+# Ports are chosen so they don't clash with the other MediaMTX instances (8554/8556, 8000/8001).
+logLevel: info
+api: no
+metrics: no
+pprof: no
+playback: no
+rtmp: no
+hls: no
+webrtc: no
+srt: no
+
+rtsp: yes
+rtspAddress: :8564
+# UDP for Wi-Fi clients (a late packet = one glitchy frame, not a frozen TCP stream);
+# TCP for the emulator. RTP/RTCP ports avoid 8000/8001 used by the other MediaMTX instances.
+rtspTransports: [udp, tcp]
+rtpAddress: :8064
+rtcpAddress: :8065
+
+paths:
+  drone:
+    runOnInit: >
+      ffmpeg -hide_banner -loglevel warning
+      -fflags nobuffer -flags low_delay
+      -protocol_whitelist file,udp,rtp
+      -i drone.sdp
+      -vf scale=960:-2 -c:v libx264 -preset ultrafast -tune zerolatency -threads 1
+      -profile:v baseline -pix_fmt yuv420p -g 15 -an
+      -b:v 1200k -maxrate 1200k -bufsize 600k
+      -f rtsp -rtsp_transport tcp rtsp://127.0.0.1:8564/drone
+    runOnInitRestart: yes
